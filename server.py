@@ -47,12 +47,21 @@ def fetch_overpass_data():
             logger.error(f"Failed to fetch data: {str(e)}")
 
 def add_pota_tag_to_subelements(element):
+    pota_value = element['tags'].get('communication:amateur_radio:pota', 'yes')
+    
     if element['type'] == 'way':
         if 'geometry' in element:
             for node in element['geometry']:
                 if 'tags' not in node:
                     node['tags'] = {}
-                node['tags']['communication:amateur_radio:pota'] = element['tags'].get('communication:amateur_radio:pota', 'yes')
+                node['tags']['communication:amateur_radio:pota'] = pota_value
+    elif element['type'] == 'relation':
+        if 'members' in element:
+            for member in element['members']:
+                if member['type'] == 'way':
+                    if 'tags' not in member:
+                        member['tags'] = {}
+                    member['tags']['communication:amateur_radio:pota'] = pota_value
     return element
 
 def filter_data(south, west, north, east):
