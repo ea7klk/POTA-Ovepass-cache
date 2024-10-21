@@ -46,6 +46,15 @@ def fetch_overpass_data():
         except requests.RequestException as e:
             logger.error(f"Failed to fetch data: {str(e)}")
 
+def add_pota_tag_to_subelements(element):
+    if element['type'] == 'way':
+        if 'geometry' in element:
+            for node in element['geometry']:
+                if 'tags' not in node:
+                    node['tags'] = {}
+                node['tags']['communication:amateur_radio:pota'] = element['tags'].get('communication:amateur_radio:pota', 'yes')
+    return element
+
 def filter_data(south, west, north, east):
     with cache_lock:
         if cached_data is None:
@@ -64,12 +73,12 @@ def filter_data(south, west, north, east):
                         bounds = element['bounds']
                         if (south <= bounds['minlat'] <= north or south <= bounds['maxlat'] <= north) and \
                            (west <= bounds['minlon'] <= east or west <= bounds['maxlon'] <= east):
-                            filtered_elements.append(element)
+                            filtered_elements.append(add_pota_tag_to_subelements(element))
                     elif 'geometry' in element:
                         for point in element['geometry']:
                             lat, lon = point['lat'], point['lon']
                             if south <= lat <= north and west <= lon <= east:
-                                filtered_elements.append(element)
+                                filtered_elements.append(add_pota_tag_to_subelements(element))
                                 break
         
         logger.info(f"Filtered {len(filtered_elements)} elements out of {len(cached_data['elements'])}")
