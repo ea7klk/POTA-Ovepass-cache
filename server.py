@@ -5,6 +5,7 @@ from flask import Flask, request, Response, jsonify
 from flask_cors import CORS
 import schedule
 import time
+from datetime import datetime
 from threading import Thread, Lock
 import urllib.parse
 from pota_csv_fetcher import update_pota_data
@@ -171,6 +172,30 @@ def query_data():
                 f"Processing time: {processing_time:.2f} seconds")
     
     return Response(json.dumps(filtered_data), mimetype='application/json')
+
+@app.route('/reload2024', methods=['GET'])
+def force_reload():
+    """Force reload of POTA data."""
+    try:
+        data = update_pota_data(force=True)
+        if data:
+            return jsonify({
+                "status": "success",
+                "message": f"POTA data reloaded with {len(data['elements'])} elements",
+                "timestamp": datetime.now().isoformat()
+            })
+        else:
+            return jsonify({
+                "status": "error",
+                "message": "Failed to reload POTA data",
+                "timestamp": datetime.now().isoformat()
+            }), 500
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
 
 @app.route('/api/cache_status', methods=['GET'])
 def cache_status():
