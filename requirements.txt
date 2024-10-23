@@ -1,6 +1,4 @@
 flask
+flask_cors
 requests
-geojson
 schedule
-flask-cors
-gunicorn

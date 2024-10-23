@@ -126,3 +126,7 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# local data
+last_fetch_time.txt
+pota_data.json

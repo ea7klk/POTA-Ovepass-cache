@@ -7,6 +7,7 @@ import schedule
 import time
 from threading import Thread, Lock
 import urllib.parse
+from pota_csv_fetcher import update_pota_data
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -20,6 +21,29 @@ last_cache_update = None
 cache_refresh_count = 0
 schedule_thread = None
 cache_lock = Lock()
+
+def merge_pota_data(overpass_data, pota_data):
+    """Merge POTA data with Overpass data, with Overpass taking precedence for matching references."""
+    if not pota_data or 'elements' not in pota_data or not pota_data['elements']:
+        return overpass_data
+    
+    if 'elements' not in overpass_data:
+        overpass_data['elements'] = []
+    
+    # Create a set of POTA references from Overpass data
+    overpass_refs = set()
+    for element in overpass_data['elements']:
+        if 'tags' in element and 'communication:amateur_radio:pota' in element['tags']:
+            overpass_refs.add(element['tags']['communication:amateur_radio:pota'])
+    
+    # Add POTA elements that don't exist in Overpass data
+    for element in pota_data['elements']:
+        if 'tags' in element and 'communication:amateur_radio:pota' in element['tags']:
+            pota_ref = element['tags']['communication:amateur_radio:pota']
+            if pota_ref not in overpass_refs:
+                overpass_data['elements'].append(element)
+    
+    return overpass_data
 
 def fetch_overpass_data():
     global cached_data, last_cache_update, cache_refresh_count
@@ -35,9 +59,15 @@ def fetch_overpass_data():
     with cache_lock:
         try:
             start_time = time.time()
+            # Fetch Overpass API data
             response = requests.get(overpass_url, params={'data': overpass_query})
             response.raise_for_status()
-            cached_data = response.json()
+            overpass_data = response.json()
+            
+            # Fetch POTA data and merge with Overpass data
+            pota_data = update_pota_data()
+            cached_data = merge_pota_data(overpass_data, pota_data)
+            
             last_cache_update = time.time()
             cache_refresh_count += 1
             processing_time = last_cache_update - start_time
@@ -74,9 +104,10 @@ def filter_data(south, west, north, east):
         for element in cached_data['elements']:
             if 'type' in element:
                 if element['type'] == 'node':
-                    lat, lon = element['lat'], element['lon']
-                    if south <= lat <= north and west <= lon <= east:
-                        filtered_elements.append(element)
+                    lat, lon = element.get('lat'), element.get('lon')
+                    if lat is not None and lon is not None:
+                        if south <= lat <= north and west <= lon <= east:
+                            filtered_elements.append(element)
                 elif element['type'] in ['way', 'relation']:
                     if 'bounds' in element:
                         bounds = element['bounds']
@@ -85,10 +116,11 @@ def filter_data(south, west, north, east):
                             filtered_elements.append(add_pota_tag_to_subelements(element))
                     elif 'geometry' in element:
                         for point in element['geometry']:
-                            lat, lon = point['lat'], point['lon']
-                            if south <= lat <= north and west <= lon <= east:
-                                filtered_elements.append(add_pota_tag_to_subelements(element))
-                                break
+                            lat, lon = point.get('lat'), point.get('lon')
+                            if lat is not None and lon is not None:
+                                if south <= lat <= north and west <= lon <= east:
+                                    filtered_elements.append(add_pota_tag_to_subelements(element))
+                                    break
         
         logger.info(f"Filtered {len(filtered_elements)} elements out of {len(cached_data['elements'])}")
         return {'elements': filtered_elements, 'version': 0.6, 'generator': 'Overpass API POTA Cache'}
