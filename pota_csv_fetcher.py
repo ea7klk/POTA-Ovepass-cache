@@ -35,12 +35,13 @@ def update_last_fetch_time():
     except Exception as e:
         logger.error(f"Error writing last fetch time: {e}")
 
-def fetch_and_parse_csv():
+def fetch_and_parse_csv(force=False):
     """Fetch and parse the POTA CSV file."""
     try:
         # Fetch CSV data
         response = requests.get(CSV_URL)
         response.raise_for_status()
+        response.encoding = 'utf-8'  # Ensure proper character encoding
         
         # Parse CSV
         elements = []
@@ -53,6 +54,12 @@ def fetch_and_parse_csv():
                 # Extract fields
                 pota_ref = row[0]
                 name = row[1]
+                active = row[2]
+                
+                # Skip inactive parks
+                if active != '1':
+                    logger.debug(f"Skipping inactive park {pota_ref}")
+                    continue
                 
                 # Skip records without coordinates
                 if not row[5] or not row[6] or row[5] == '' or row[6] == '':
@@ -83,8 +90,15 @@ def fetch_and_parse_csv():
                 logger.debug(f"Skipping invalid row: {e}")
                 continue
         
-        logger.info(f"Successfully processed {len(elements)} parks from CSV")
-        return {'elements': elements, 'version': 0.6, 'generator': 'POTA CSV Parser'}
+        result = {'elements': elements, 'version': 0.6, 'generator': 'POTA CSV Parser'}
+        logger.info(f"Successfully processed {len(elements)} active parks from CSV")
+        
+        # Save data if not forced refresh
+        if not force:
+            save_data(result)
+            update_last_fetch_time()
+        
+        return result
         
     except Exception as e:
         logger.error(f"Error fetching or parsing CSV: {e}")
@@ -109,20 +123,17 @@ def load_data():
         logger.error(f"Error loading cached data: {e}")
     return None
 
-def update_pota_data():
+def update_pota_data(force=False):
     """Main function to update POTA data."""
-    if should_fetch_data():
+    if force or should_fetch_data():
         logger.info("Fetching new POTA data...")
-        data = fetch_and_parse_csv()
+        data = fetch_and_parse_csv(force)
         
-        if data:
-            save_data(data)
-            update_last_fetch_time()
-            logger.info(f"POTA data update completed with {len(data['elements'])} parks")
-            return data
-        else:
+        if not data:
             logger.warning("Failed to fetch new data, trying to load cached data")
             return load_data()
+        
+        return data
     else:
         logger.info("Using cached POTA data (less than 1 hour old)")
         return load_data()
