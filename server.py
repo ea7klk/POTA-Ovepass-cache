@@ -3,6 +3,7 @@ import json
 import logging
 from flask import Flask, request, Response, jsonify
 from flask_cors import CORS
+from flask_compress import Compress
 import schedule
 import time
 from datetime import datetime
@@ -15,6 +16,11 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
+
+# Configure Flask-Compress with Brotli compression
+app.config['COMPRESS_ALGORITHM'] = 'br'  # Use Brotli compression
+app.config['COMPRESS_BR_LEVEL'] = 4      # Balanced Brotli compression level for dynamic content
+Compress(app)
 
 # Global variables to store the cached data and metadata
 cached_data = None
