@@ -4,3 +4,4 @@ requests
 schedule
 gunicorn
 datetime
+flask-compress
