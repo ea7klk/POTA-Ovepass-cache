@@ -1,20 +1,23 @@
 {
-  "name": "geojson-app",
+  "name": "geojson-server",
   "version": "1.0.0",
-  "description": "An application to fetch and process GeoJSON data",
-  "main": "app.js",
+  "description": "A server to fetch and serve GeoJSON data",
+  "main": "index.js",
   "scripts": {
-    "start": "node app.js"
+    "start": "node app2.js"
   },
   "dependencies": {
-    "axios": "^1.4.0",
+    "axios": "^0.27.2",
     "csv-parser": "^3.0.0",
-    "express": "^4.18.2",
-    "geobuf": "^3.0.2",
+    "express": "^4.18.1",
+    "fs": "0.0.1-security",
+    "geobuf": "^3.0.1",
     "node-schedule": "^2.1.0",
     "osmtogeojson": "^3.0.0-beta.5",
-    "pbf": "^4.0.1"
+    "pbf": "^3.2.1",
+    "url": "^0.11.0"
   },
-  "author": "Your Name",
-  "license": "MIT"
+  "type": "module",
+  "author": "",
+  "license": "ISC"
 }
