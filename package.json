@@ -4,7 +4,7 @@
   "description": "A server to fetch and serve GeoJSON data",
   "main": "index.js",
   "scripts": {
-    "start": "node app2.js"
+    "start": "node app.js"
   },
   "dependencies": {
     "axios": "^0.27.2",
