@@ -1,7 +1,0 @@
-flask
-flask_cors
-requests
-schedule
-gunicorn
-datetime
-flask-compress
