@@ -30,12 +30,27 @@ schedule_thread = None
 cache_lock = Lock()
 
 def merge_pota_data(overpass_data, pota_data):
-    """Merge POTA data with Overpass data, with Overpass taking precedence for matching references."""
+    """Merge POTA data with Overpass data, preserving names from POTA CSV data."""
     if not pota_data or 'elements' not in pota_data or not pota_data['elements']:
         return overpass_data
     
     if 'elements' not in overpass_data:
         overpass_data['elements'] = []
+    
+    # Create a mapping of POTA references to their CSV names
+    pota_names = {}
+    for element in pota_data['elements']:
+        if 'tags' in element and 'communication:amateur_radio:pota' in element['tags']:
+            pota_ref = element['tags']['communication:amateur_radio:pota']
+            if 'name' in element['tags']:
+                pota_names[pota_ref] = element['tags']['name']
+    
+    # Update Overpass elements with POTA CSV names
+    for element in overpass_data['elements']:
+        if 'tags' in element and 'communication:amateur_radio:pota' in element['tags']:
+            pota_ref = element['tags']['communication:amateur_radio:pota']
+            if pota_ref in pota_names:
+                element['tags']['name'] = pota_names[pota_ref]
     
     # Create a set of POTA references from Overpass data
     overpass_refs = set()
