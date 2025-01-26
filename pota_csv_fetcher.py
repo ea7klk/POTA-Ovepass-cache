@@ -73,7 +73,7 @@ def fetch_and_parse_csv(force=False):
                     logger.debug(f"Skipping park {pota_ref} due to invalid coordinates: lat={row[5]}, lon={row[6]}")
                     continue
                 
-                # Create Overpass-format element with explicit active status
+                # Create Overpass-format element
                 element = {
                     'type': 'node',
                     'lat': lat,
@@ -81,12 +81,10 @@ def fetch_and_parse_csv(force=False):
                     'tags': {
                         'communication:amateur_radio:pota': pota_ref,
                         'name': name,
-                        'pota:active': '1',
                         'unmapped_osm': 'true'
                     }
                 }
                 elements.append(element)
-                logger.debug(f"Added active park {pota_ref}: {name}")
                 
             except (IndexError, ValueError) as e:
                 logger.debug(f"Skipping invalid row: {e}")

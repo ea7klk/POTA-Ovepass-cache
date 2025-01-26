@@ -30,43 +30,42 @@ schedule_thread = None
 cache_lock = Lock()
 
 def merge_pota_data(overpass_data, pota_data):
-    """Merge POTA data with Overpass data, only keeping active POTA references from CSV."""
+    """Merge POTA data with Overpass data, preserving names from POTA CSV data."""
     if not pota_data or 'elements' not in pota_data or not pota_data['elements']:
-        return {'elements': [], 'version': 0.6, 'generator': 'POTA Cache'}
+        return overpass_data
     
-    # Create a mapping of active POTA references to their CSV data
-    active_pota_refs = {}
+    if 'elements' not in overpass_data:
+        overpass_data['elements'] = []
+    
+    # Create a mapping of POTA references to their CSV names
+    pota_names = {}
     for element in pota_data['elements']:
         if 'tags' in element and 'communication:amateur_radio:pota' in element['tags']:
             pota_ref = element['tags']['communication:amateur_radio:pota']
-            active_pota_refs[pota_ref] = element
+            if 'name' in element['tags']:
+                pota_names[pota_ref] = element['tags']['name']
     
-    # Filter Overpass data to only include active POTA references
-    filtered_elements = []
-    if 'elements' in overpass_data:
-        for element in overpass_data['elements']:
-            if 'tags' in element and 'communication:amateur_radio:pota' in element['tags']:
-                pota_ref = element['tags']['communication:amateur_radio:pota']
-                if pota_ref in active_pota_refs:
-                    # Use the geometry from Overpass but properties from CSV
-                    merged_element = element.copy()
-                    merged_element['tags'] = active_pota_refs[pota_ref]['tags'].copy()
-                    filtered_elements.append(merged_element)
+    # Update Overpass elements with POTA CSV names
+    for element in overpass_data['elements']:
+        if 'tags' in element and 'communication:amateur_radio:pota' in element['tags']:
+            pota_ref = element['tags']['communication:amateur_radio:pota']
+            if pota_ref in pota_names:
+                element['tags']['name'] = pota_names[pota_ref]
     
-    # Add any active POTA references that weren't in Overpass data
-    overpass_refs = {element['tags']['communication:amateur_radio:pota'] 
-                    for element in filtered_elements 
-                    if 'tags' in element and 'communication:amateur_radio:pota' in element['tags']}
+    # Create a set of POTA references from Overpass data
+    overpass_refs = set()
+    for element in overpass_data['elements']:
+        if 'tags' in element and 'communication:amateur_radio:pota' in element['tags']:
+            overpass_refs.add(element['tags']['communication:amateur_radio:pota'])
     
-    for pota_ref, element in active_pota_refs.items():
-        if pota_ref not in overpass_refs:
-            filtered_elements.append(element)
+    # Add POTA elements that don't exist in Overpass data
+    for element in pota_data['elements']:
+        if 'tags' in element and 'communication:amateur_radio:pota' in element['tags']:
+            pota_ref = element['tags']['communication:amateur_radio:pota']
+            if pota_ref not in overpass_refs:
+                overpass_data['elements'].append(element)
     
-    return {
-        'elements': filtered_elements,
-        'version': 0.6,
-        'generator': 'POTA Cache'
-    }
+    return overpass_data
 
 def fetch_overpass_data():
     global cached_data, last_cache_update, cache_refresh_count
