@@ -78,16 +78,26 @@ def merge_pota_data(overpass_data, pota_data):
     return overpass_data
 
 
-def fetch_overpass_data():
+def fetch_overpass_data(bbox=None):
     global cached_data, last_cache_update, cache_refresh_count
     overpass_url = "https://overpass-api.de/api/interpreter"
-    overpass_query = """
-    [out:json];
-    (
-      nwr["communication:amateur_radio:pota"];
-    );
-    out geom;
-    """
+    if bbox is None:
+        overpass_query = """
+        [out:json][timeout:60];
+        (
+          nwr["communication:amateur_radio:pota"];
+        );
+        out geom;
+        """
+    else:
+        south, west, north, east = bbox
+        overpass_query = f"""
+        [out:json][timeout:60];
+        (
+          nwr["communication:amateur_radio:pota"]({south},{west},{north},{east});
+        );
+        out geom;
+        """
     
     with cache_lock:
         try:
@@ -111,8 +121,10 @@ def fetch_overpass_data():
             processing_time = last_cache_update - start_time
             logger.info(f"Cache refreshed (#{cache_refresh_count}). Total elements: {len(cached_data['elements'])}. "
                         f"Cache updated at: {time.ctime(last_cache_update)}. Processing time: {processing_time:.2f} seconds")
+            return cached_data
         except requests.RequestException as e:
             logger.error(f"Failed to fetch data: {str(e)}")
+            return None
 
 def add_pota_tag_to_subelements(element):
     pota_value = element['tags'].get('communication:amateur_radio:pota', 'yes')
@@ -132,14 +144,15 @@ def add_pota_tag_to_subelements(element):
                     member['tags']['communication:amateur_radio:pota'] = pota_value
     return element
 
-def filter_data(south, west, north, east):
+def filter_data(south, west, north, east, data=None):
     with cache_lock:
-        if cached_data is None:
+        data_to_filter = data if data is not None else cached_data
+        if data_to_filter is None:
             logger.warning("No cached data available")
             return None
         
         filtered_elements = []
-        for element in cached_data['elements']:
+        for element in data_to_filter['elements']:
             if 'type' in element:
                 if element['type'] == 'node':
                     lat, lon = element.get('lat'), element.get('lon')
@@ -160,7 +173,7 @@ def filter_data(south, west, north, east):
                                     filtered_elements.append(add_pota_tag_to_subelements(element))
                                     break
         
-        logger.info(f"Filtered {len(filtered_elements)} elements out of {len(cached_data['elements'])}")
+        logger.info(f"Filtered {len(filtered_elements)} elements out of {len(data_to_filter['elements'])}")
         return {'elements': filtered_elements, 'version': 0.6, 'generator': 'Overpass API POTA Cache'}
 
 def parse_query(query):
@@ -198,10 +211,12 @@ def query_data():
         return Response("Invalid query format", status=400)
 
     south, west, north, east = bbox
-    filtered_data = filter_data(south, west, north, east)
-    if filtered_data is None:
-        logger.error("No cached data available")
-        return Response("No cached data available", status=503)
+    overpass_data = fetch_overpass_data(bbox)
+    if overpass_data is None:
+        logger.error("Unable to refresh data for requested bounding box")
+        return Response("Unable to refresh data", status=503)
+
+    filtered_data = filter_data(south, west, north, east, overpass_data)
 
     processing_time = time.time() - start_time
     logger.info(f"Returning {len(filtered_data['elements'])} elements from cache. "
@@ -252,6 +267,18 @@ def cache_status():
             "cache_refresh_count": cache_refresh_count
         })
 
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({
+        "service": "pota-overpass-cache",
+        "status": "ok",
+        "cache": "available" if cached_data is not None else "empty",
+    })
+
+@app.route('/healthz', methods=['GET'])
+def healthz():
+    return jsonify({"status": "ok"})
+
 def run_schedule():
     while True:
         schedule.run_pending()
@@ -259,17 +286,15 @@ def run_schedule():
 
 def start_scheduler():
     global schedule_thread
-    # Schedule data fetching every 5 minutes
-    schedule.every(5).minutes.do(fetch_overpass_data)
+    # Refresh the POTA reference data periodically. OSM data is fetched per
+    # request for the requested bounding box to avoid a costly global query.
+    schedule.every(1).hours.do(update_pota_data, force=True)
 
     # Create and start the scheduler thread if it's not already running
     if schedule_thread is None or not schedule_thread.is_alive():
         schedule_thread = Thread(target=run_schedule)
         schedule_thread.daemon = True
         schedule_thread.start()
-
-# Fetch data initially
-fetch_overpass_data()
 
 # Start the scheduler
 start_scheduler()
