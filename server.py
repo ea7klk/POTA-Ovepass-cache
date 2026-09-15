@@ -1,6 +1,7 @@
 import requests
 import json
 import logging
+import os
 from flask import Flask, request, Response, jsonify
 from flask_cors import CORS
 from flask_compress import Compress
@@ -26,15 +27,19 @@ Compress(app)
 cached_data = None
 last_cache_update = None
 cache_refresh_count = 0
+cache_hit_count = 0
 schedule_thread = None
 cache_lock = Lock()
+bbox_cache = {}
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "900"))
+MAX_CACHE_ENTRIES = int(os.getenv("CACHE_MAX_ENTRIES", "32"))
 
 HTTP_HEADERS = {
     "User-Agent": "pota-overpass-cache/1.1 (+https://github.com/ea7klk/pota-ovepass-cache)",
     "Accept": "application/json",
 }
 
-def merge_pota_data(overpass_data, pota_data):
+def merge_pota_data(overpass_data, pota_data, bbox=None):
     """Merge POTA data with Overpass data, preserving names from POTA CSV data."""
     if not pota_data or 'elements' not in pota_data or not pota_data['elements']:
         return overpass_data
@@ -72,14 +77,23 @@ def merge_pota_data(overpass_data, pota_data):
     for element in pota_data['elements']:
         if 'tags' in element and 'communication:amateur_radio:pota' in element['tags']:
             pota_ref = element['tags']['communication:amateur_radio:pota']
+            if bbox is not None:
+                south, west, north, east = bbox
+                lat, lon = element.get('lat'), element.get('lon')
+                if lat is None or lon is None or not (south <= lat <= north and west <= lon <= east):
+                    continue
             if pota_ref not in overpass_refs:
                 overpass_data['elements'].append(element)
 
     return overpass_data
 
 
+def normalize_bbox(bbox):
+    return tuple(round(value, 4) for value in bbox)
+
+
 def fetch_overpass_data(bbox=None):
-    global cached_data, last_cache_update, cache_refresh_count
+    global cached_data, last_cache_update, cache_refresh_count, cache_hit_count
     overpass_url = "https://overpass-api.de/api/interpreter"
     if bbox is None:
         overpass_query = """
@@ -99,7 +113,21 @@ def fetch_overpass_data(bbox=None):
         out geom;
         """
     
+    cache_key = normalize_bbox(bbox) if bbox is not None else None
+
     with cache_lock:
+        if cache_key is not None:
+            cached_entry = bbox_cache.get(cache_key)
+            if cached_entry is not None:
+                cached_at, cached_value = cached_entry
+                if time.time() - cached_at < CACHE_TTL_SECONDS:
+                    cached_data = cached_value
+                    last_cache_update = cached_at
+                    cache_hit_count += 1
+                    logger.info(f"Cache hit for bbox {cache_key} (hit #{cache_hit_count})")
+                    return cached_value
+                del bbox_cache[cache_key]
+
         try:
             start_time = time.time()
             # Fetch Overpass API data
@@ -114,13 +142,18 @@ def fetch_overpass_data(bbox=None):
             
             # Fetch POTA data and merge with Overpass data
             pota_data = update_pota_data()
-            cached_data = merge_pota_data(overpass_data, pota_data)
+            cached_data = merge_pota_data(overpass_data, pota_data, bbox)
             
             last_cache_update = time.time()
             cache_refresh_count += 1
             processing_time = last_cache_update - start_time
             logger.info(f"Cache refreshed (#{cache_refresh_count}). Total elements: {len(cached_data['elements'])}. "
                         f"Cache updated at: {time.ctime(last_cache_update)}. Processing time: {processing_time:.2f} seconds")
+            if cache_key is not None:
+                bbox_cache[cache_key] = (last_cache_update, cached_data)
+                while len(bbox_cache) > MAX_CACHE_ENTRIES:
+                    oldest_key = min(bbox_cache, key=lambda key: bbox_cache[key][0])
+                    del bbox_cache[oldest_key]
             return cached_data
         except requests.RequestException as e:
             logger.error(f"Failed to fetch data: {str(e)}")
@@ -257,14 +290,20 @@ def cache_status():
                 "status": "No data cached",
                 "elements_count": 0,
                 "last_update": None,
-                "cache_refresh_count": cache_refresh_count
+                "cache_refresh_count": cache_refresh_count,
+                "cache_hit_count": cache_hit_count,
+                "cache_entries": len(bbox_cache),
+                "cache_ttl_seconds": CACHE_TTL_SECONDS,
             })
         
         return jsonify({
             "status": "Cache available",
             "elements_count": len(cached_data['elements']),
             "last_update": time.ctime(last_cache_update),
-            "cache_refresh_count": cache_refresh_count
+            "cache_refresh_count": cache_refresh_count,
+            "cache_hit_count": cache_hit_count,
+            "cache_entries": len(bbox_cache),
+            "cache_ttl_seconds": CACHE_TTL_SECONDS,
         })
 
 @app.route('/', methods=['GET'])
@@ -286,15 +325,25 @@ def run_schedule():
 
 def start_scheduler():
     global schedule_thread
-    # Refresh the POTA reference data periodically. OSM data is fetched per
-    # request for the requested bounding box to avoid a costly global query.
-    schedule.every(1).hours.do(update_pota_data, force=True)
+    # Evict expired regional entries; POTA reference data is refreshed lazily.
+    schedule.every(5).minutes.do(prune_cache)
 
     # Create and start the scheduler thread if it's not already running
     if schedule_thread is None or not schedule_thread.is_alive():
         schedule_thread = Thread(target=run_schedule)
         schedule_thread.daemon = True
         schedule_thread.start()
+
+
+def prune_cache():
+    now = time.time()
+    with cache_lock:
+        expired_keys = [
+            key for key, (cached_at, _) in bbox_cache.items()
+            if now - cached_at >= CACHE_TTL_SECONDS
+        ]
+        for key in expired_keys:
+            del bbox_cache[key]
 
 # Start the scheduler
 start_scheduler()
