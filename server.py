@@ -2,6 +2,7 @@ import requests
 import json
 import logging
 import os
+import hashlib
 from flask import Flask, request, Response, jsonify
 from flask_cors import CORS
 from flask_compress import Compress
@@ -38,6 +39,13 @@ HTTP_HEADERS = {
     "User-Agent": "pota-overpass-cache/1.1 (+https://github.com/ea7klk/pota-ovepass-cache)",
     "Accept": "application/json",
 }
+
+OVERPASS_URLS = [
+    os.getenv("OVERPASS_URL", "https://overpass-api.de/api/interpreter"),
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+]
+CACHE_DIR = os.getenv("CACHE_DIR", "/app/cache")
 
 def merge_pota_data(overpass_data, pota_data, bbox=None):
     """Merge POTA data with Overpass data, preserving names from POTA CSV data."""
@@ -92,6 +100,36 @@ def normalize_bbox(bbox):
     return tuple(round(value, 4) for value in bbox)
 
 
+def cache_file(cache_key):
+    key = hashlib.sha256(repr(cache_key).encode("utf-8")).hexdigest()
+    return os.path.join(CACHE_DIR, f"bbox-{key}.json")
+
+
+def load_disk_cache(cache_key):
+    try:
+        with open(cache_file(cache_key), "r", encoding="utf-8") as cache_handle:
+            cached_entry = json.load(cache_handle)
+        cached_at = float(cached_entry["cached_at"])
+        if time.time() - cached_at < CACHE_TTL_SECONDS:
+            return cached_at, cached_entry["data"]
+        os.remove(cache_file(cache_key))
+    except (FileNotFoundError, KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
+        return None
+    return None
+
+
+def save_disk_cache(cache_key, cached_at, data):
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        target = cache_file(cache_key)
+        temporary = f"{target}.{os.getpid()}.tmp"
+        with open(temporary, "w", encoding="utf-8") as cache_handle:
+            json.dump({"cached_at": cached_at, "data": data}, cache_handle)
+        os.replace(temporary, target)
+    except OSError as error:
+        logger.warning(f"Unable to persist cache entry: {error}")
+
+
 def fetch_overpass_data(bbox=None):
     global cached_data, last_cache_update, cache_refresh_count, cache_hit_count
     overpass_url = "https://overpass-api.de/api/interpreter"
@@ -127,18 +165,39 @@ def fetch_overpass_data(bbox=None):
                     logger.info(f"Cache hit for bbox {cache_key} (hit #{cache_hit_count})")
                     return cached_value
                 del bbox_cache[cache_key]
+            else:
+                disk_entry = load_disk_cache(cache_key)
+                if disk_entry is not None:
+                    cached_at, cached_value = disk_entry
+                    bbox_cache[cache_key] = (cached_at, cached_value)
+                    cached_data = cached_value
+                    last_cache_update = cached_at
+                    cache_hit_count += 1
+                    logger.info(f"Persistent cache hit for bbox {cache_key} (hit #{cache_hit_count})")
+                    return cached_value
 
         try:
             start_time = time.time()
-            # Fetch Overpass API data
-            response = requests.get(
-                overpass_url,
-                params={'data': overpass_query},
-                headers=HTTP_HEADERS,
-                timeout=180,
-            )
-            response.raise_for_status()
-            overpass_data = response.json()
+            overpass_data = None
+            last_error = None
+            for overpass_url in OVERPASS_URLS:
+                try:
+                    response = requests.get(
+                        overpass_url,
+                        params={'data': overpass_query},
+                        headers=HTTP_HEADERS,
+                        timeout=(10, 120),
+                    )
+                    response.raise_for_status()
+                    overpass_data = response.json()
+                    logger.info(f"Fetched Overpass data from {overpass_url}")
+                    break
+                except (requests.RequestException, ValueError) as error:
+                    last_error = error
+                    logger.warning(f"Overpass backend failed ({overpass_url}): {error}")
+
+            if overpass_data is None:
+                raise requests.RequestException(f"all Overpass backends failed: {last_error}")
             
             # Fetch POTA data and merge with Overpass data
             pota_data = update_pota_data()
@@ -151,6 +210,7 @@ def fetch_overpass_data(bbox=None):
                         f"Cache updated at: {time.ctime(last_cache_update)}. Processing time: {processing_time:.2f} seconds")
             if cache_key is not None:
                 bbox_cache[cache_key] = (last_cache_update, cached_data)
+                save_disk_cache(cache_key, last_cache_update, cached_data)
                 while len(bbox_cache) > MAX_CACHE_ENTRIES:
                     oldest_key = min(bbox_cache, key=lambda key: bbox_cache[key][0])
                     del bbox_cache[oldest_key]
