@@ -29,6 +29,11 @@ cache_refresh_count = 0
 schedule_thread = None
 cache_lock = Lock()
 
+HTTP_HEADERS = {
+    "User-Agent": "pota-overpass-cache/1.1 (+https://github.com/ea7klk/pota-ovepass-cache)",
+    "Accept": "application/json",
+}
+
 def merge_pota_data(overpass_data, pota_data):
     """Merge POTA data with Overpass data, preserving names from POTA CSV data."""
     if not pota_data or 'elements' not in pota_data or not pota_data['elements']:
@@ -88,7 +93,12 @@ def fetch_overpass_data():
         try:
             start_time = time.time()
             # Fetch Overpass API data
-            response = requests.get(overpass_url, params={'data': overpass_query})
+            response = requests.get(
+                overpass_url,
+                params={'data': overpass_query},
+                headers=HTTP_HEADERS,
+                timeout=180,
+            )
             response.raise_for_status()
             overpass_data = response.json()
             

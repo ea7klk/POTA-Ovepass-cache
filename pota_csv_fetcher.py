@@ -14,6 +14,10 @@ POTA_DATA_FILE = "pota_data.json"
 LAST_FETCH_FILE = "last_fetch_time.txt"
 FETCH_INTERVAL = timedelta(hours=1)
 CSV_URL = "https://pota.app/all_parks_ext.csv"
+HTTP_HEADERS = {
+    "User-Agent": "pota-overpass-cache/1.1 (+https://github.com/ea7klk/pota-ovepass-cache)",
+    "Accept": "text/csv, application/csv;q=0.9, */*;q=0.8",
+}
 
 def should_fetch_data():
     if not os.path.exists(LAST_FETCH_FILE):
@@ -39,7 +43,7 @@ def fetch_and_parse_csv(force=False):
     """Fetch and parse the POTA CSV file."""
     try:
         # Fetch CSV data
-        response = requests.get(CSV_URL)
+        response = requests.get(CSV_URL, headers=HTTP_HEADERS, timeout=60)
         response.raise_for_status()
         response.encoding = 'utf-8'  # Ensure proper character encoding
         
