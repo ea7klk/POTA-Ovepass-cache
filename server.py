@@ -132,7 +132,6 @@ def save_disk_cache(cache_key, cached_at, data):
 
 def fetch_overpass_data(bbox=None):
     global cached_data, last_cache_update, cache_refresh_count, cache_hit_count
-    overpass_url = "https://overpass-api.de/api/interpreter"
     if bbox is None:
         overpass_query = """
         [out:json][timeout:60];
@@ -186,7 +185,7 @@ def fetch_overpass_data(bbox=None):
                         overpass_url,
                         params={'data': overpass_query},
                         headers=HTTP_HEADERS,
-                        timeout=(10, 120),
+                        timeout=(5, 30),
                     )
                     response.raise_for_status()
                     overpass_data = response.json()
@@ -196,11 +195,14 @@ def fetch_overpass_data(bbox=None):
                     last_error = error
                     logger.warning(f"Overpass backend failed ({overpass_url}): {error}")
 
-            if overpass_data is None:
-                raise requests.RequestException(f"all Overpass backends failed: {last_error}")
-            
-            # Fetch POTA data and merge with Overpass data
             pota_data = update_pota_data()
+            if overpass_data is None:
+                if not pota_data:
+                    raise requests.RequestException(f"all Overpass backends failed: {last_error}")
+                logger.warning("All Overpass backends failed; serving POTA CSV points as fallback")
+                overpass_data = {"elements": []}
+
+            # Fetch POTA data and merge with Overpass data
             cached_data = merge_pota_data(overpass_data, pota_data, bbox)
             
             last_cache_update = time.time()

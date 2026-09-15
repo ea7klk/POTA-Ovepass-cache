@@ -10,8 +10,9 @@ from io import StringIO
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-POTA_DATA_FILE = "pota_data.json"
-LAST_FETCH_FILE = "last_fetch_time.txt"
+POTA_CACHE_DIR = os.getenv("POTA_CACHE_DIR", "/app/cache")
+POTA_DATA_FILE = os.path.join(POTA_CACHE_DIR, "pota_data.json")
+LAST_FETCH_FILE = os.path.join(POTA_CACHE_DIR, "last_fetch_time.txt")
 FETCH_INTERVAL = timedelta(hours=1)
 CSV_URL = "https://pota.app/all_parks_ext.csv"
 HTTP_HEADERS = {
@@ -34,6 +35,7 @@ def should_fetch_data():
 
 def update_last_fetch_time():
     try:
+        os.makedirs(POTA_CACHE_DIR, exist_ok=True)
         with open(LAST_FETCH_FILE, 'w') as f:
             f.write(datetime.now().isoformat())
     except Exception as e:
@@ -111,6 +113,7 @@ def fetch_and_parse_csv(force=False):
 def save_data(data):
     """Save the fetched data to a file."""
     try:
+        os.makedirs(POTA_CACHE_DIR, exist_ok=True)
         with open(POTA_DATA_FILE, 'w') as f:
             json.dump(data, f, indent=2)
         logger.info(f"Successfully saved data to {POTA_DATA_FILE}")
